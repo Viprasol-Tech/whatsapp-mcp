@@ -325,6 +325,129 @@ class SendFileBody(BaseModel):
     media_path: str
 
 
+class WorkerPauseBody(BaseModel):
+    jid: str
+
+
+# ---------------------------------------------------------------------------
+# Worker DB helpers (sync)
+# ---------------------------------------------------------------------------
+
+def _db_worker_status() -> dict:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Ensure tables exist (worker may not have started yet)
+        cursor.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS auto_replies (
+                message_id TEXT,
+                chat_jid   TEXT,
+                replied_at TEXT,
+                reply_text TEXT,
+                status     TEXT,
+                PRIMARY KEY (message_id, chat_jid)
+            );
+            CREATE TABLE IF NOT EXISTS paused_chats (
+                jid       TEXT PRIMARY KEY,
+                paused_at TEXT
+            );
+            """
+        )
+
+        cursor.execute("SELECT COUNT(*) FROM auto_replies WHERE status = 'sent'")
+        total_replied = cursor.fetchone()[0]
+
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        cursor.execute(
+            "SELECT COUNT(*) FROM auto_replies WHERE status = 'sent' AND replied_at LIKE ?",
+            (f"{today}%",),
+        )
+        replies_today = cursor.fetchone()[0]
+
+        cursor.execute(
+            "SELECT replied_at FROM auto_replies WHERE status = 'sent' ORDER BY replied_at DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        last_replied_at = row[0] if row else None
+
+        cursor.execute("SELECT jid FROM paused_chats ORDER BY paused_at")
+        paused_chats = [r[0] for r in cursor.fetchall()]
+
+        auto_reply_enabled = os.getenv("AUTO_REPLY_ENABLED", "true").lower() == "true"
+        all_paused = "*" in paused_chats
+        real_paused = [j for j in paused_chats if j != "*"]
+
+        return {
+            "enabled": auto_reply_enabled,
+            "active": auto_reply_enabled and not all_paused,
+            "total_replied": total_replied,
+            "replies_today": replies_today,
+            "last_replied_at": last_replied_at,
+            "paused_chats": real_paused,
+        }
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
+def _db_pause_chat(jid: str) -> None:
+    now = datetime.utcnow().isoformat()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "INSERT OR REPLACE INTO paused_chats (jid, paused_at) VALUES (?, ?)",
+            (jid, now),
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
+def _db_resume_chat(jid: str) -> None:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("DELETE FROM paused_chats WHERE jid = ?", (jid,))
+        conn.commit()
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
+def _db_worker_logs() -> list:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT message_id, chat_jid, replied_at, reply_text, status
+            FROM auto_replies
+            ORDER BY replied_at DESC
+            LIMIT 50
+            """
+        )
+        rows = cursor.fetchall()
+        return [
+            {
+                "message_id": r[0],
+                "chat_jid": r[1],
+                "replied_at": r[2],
+                "reply_text": r[3],
+                "status": r[4],
+            }
+            for r in rows
+        ]
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -443,6 +566,93 @@ async def send_file(body: SendFileBody, _: None = Depends(require_auth)):
         raise HTTPException(status_code=e.response.status_code, detail=e.response.text)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Bridge error: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Worker control endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/worker/status")
+async def worker_status(_: None = Depends(require_auth)):
+    try:
+        result = await asyncio.to_thread(_db_worker_status)
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/worker/pause")
+async def worker_pause(body: WorkerPauseBody, _: None = Depends(require_auth)):
+    if not body.jid:
+        raise HTTPException(status_code=400, detail="jid is required")
+    try:
+        await asyncio.to_thread(_db_pause_chat, body.jid)
+        return {"ok": True, "jid": body.jid, "paused": True}
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/worker/resume")
+async def worker_resume(body: WorkerPauseBody, _: None = Depends(require_auth)):
+    if not body.jid:
+        raise HTTPException(status_code=400, detail="jid is required")
+    try:
+        await asyncio.to_thread(_db_resume_chat, body.jid)
+        return {"ok": True, "jid": body.jid, "paused": False}
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/worker/logs")
+async def worker_logs(_: None = Depends(require_auth)):
+    try:
+        result = await asyncio.to_thread(_db_worker_logs)
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _db_pause_all() -> None:
+    """Mark a sentinel '*' entry meaning all chats are paused."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS paused_chats (jid TEXT PRIMARY KEY, paused_at TEXT)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO paused_chats (jid, paused_at) VALUES (?, ?)",
+            ("*", datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _db_resume_all() -> None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("DELETE FROM paused_chats WHERE jid = '*'")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@app.post("/worker/pause-all")
+async def worker_pause_all(_: None = Depends(require_auth)):
+    try:
+        await asyncio.to_thread(_db_pause_all)
+        return {"ok": True, "paused": True}
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/worker/resume-all")
+async def worker_resume_all(_: None = Depends(require_auth)):
+    try:
+        await asyncio.to_thread(_db_resume_all)
+        return {"ok": True, "paused": False}
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------

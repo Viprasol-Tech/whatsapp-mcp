@@ -1,4 +1,4 @@
-export default function TopBar({ status }) {
+export default function TopBar({ status, onToggleAutoReply }) {
   const initial = status.phone
     ? status.phone.replace(/\D/g, '').slice(-4, -3) || 'W'
     : 'W';
@@ -16,6 +16,16 @@ export default function TopBar({ status }) {
             {status.connected ? 'Connected' : 'Disconnected'}
           </div>
         </div>
+      </div>
+      <div className="top-bar-right">
+        <button
+          className="top-bar-icon-btn"
+          onClick={onToggleAutoReply}
+          title="Auto-Reply"
+          aria-label="Toggle Auto-Reply Panel"
+        >
+          🤖
+        </button>
       </div>
     </div>
   );

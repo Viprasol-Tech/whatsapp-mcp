@@ -5,6 +5,7 @@ import ChatWindow from './components/ChatWindow';
 import QRScreen from './components/QRScreen';
 import TopBar from './components/TopBar';
 import LoginScreen from './components/LoginScreen';
+import AutoReplyPanel from './components/AutoReplyPanel';
 
 const API = '/api';
 
@@ -29,6 +30,7 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [showAutoReply, setShowAutoReply] = useState(false);
 
   function handleLogin(t) {
     setToken(t);
@@ -137,7 +139,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="sidebar">
-        <TopBar status={status} onLogout={handleLogout} />
+        <TopBar status={status} onLogout={handleLogout} onToggleAutoReply={() => setShowAutoReply(v => !v)} />
         <Sidebar
           chats={filteredChats}
           activeChat={activeChat}
@@ -162,6 +164,9 @@ export default function App() {
           </div>
         )}
       </div>
+      {showAutoReply && (
+        <AutoReplyPanel token={token} onClose={() => setShowAutoReply(false)} />
+      )}
     </div>
   );
 }

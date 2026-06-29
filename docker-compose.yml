@@ -48,6 +48,45 @@ services:
       - wamcp
     restart: unless-stopped
 
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    volumes:
+      - wa-data:/app/store
+    environment:
+      - BRIDGE_URL=http://bridge:8080
+      - DB_PATH=/app/store/messages.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MY_JID=${MY_JID:-919633652112@s.whatsapp.net}
+      - SYSTEM_PROMPT=${SYSTEM_PROMPT:-}
+      - AUTO_REPLY_ENABLED=${AUTO_REPLY_ENABLED:-true}
+    depends_on:
+      - bridge
+    networks:
+      - wamcp
+    restart: unless-stopped
+
+  mcp:
+    build:
+      context: ./whatsapp-mcp-server
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    volumes:
+      - wa-data:/app/store
+    environment:
+      - MCP_TRANSPORT=sse
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8001
+      - DB_PATH=/app/store/messages.db
+      - BRIDGE_URL=http://bridge:8080
+    depends_on:
+      - bridge
+    networks:
+      - wamcp
+    restart: unless-stopped
+
   nginx:
     build:
       context: ./nginx
