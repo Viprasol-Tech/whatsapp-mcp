@@ -109,6 +109,7 @@ def format_message(message: Message, show_chat_info: bool = True) -> None:
         output += f"From: {sender_name}: {content_prefix}{message.content}\n"
     except Exception as e:
         print(f"Error formatting message: {e}")
+        output += f"From: {message.sender}: {content_prefix}{message.content}\n"
     return output
 
 def format_messages_list(messages: List[Message], show_chat_info: bool = True) -> None:
@@ -132,7 +133,7 @@ def list_messages(
     include_context: bool = True,
     context_before: int = 1,
     context_after: int = 1
-) -> List[Message]:
+) -> str:
     """Get messages matching the specified criteria with optional context."""
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
@@ -202,18 +203,18 @@ def list_messages(
             result.append(message)
             
         if include_context and result:
-            # Add context for each message
+            seen_ids = set()
             messages_with_context = []
             for msg in result:
                 context = get_message_context(msg.id, context_before, context_after)
-                messages_with_context.extend(context.before)
-                messages_with_context.append(context.message)
-                messages_with_context.extend(context.after)
-            
+                for m in list(reversed(context.before)) + [context.message] + context.after:
+                    if m.id not in seen_ids:
+                        seen_ids.add(m.id)
+                        messages_with_context.append(m)
+
             return format_messages_list(messages_with_context, show_chat_info=True)
-            
-        # Format and display messages without context
-        return format_messages_list(result, show_chat_info=True)    
+
+        return format_messages_list(result, show_chat_info=True)
         
     except sqlite3.Error as e:
         print(f"Database error: {e}")
@@ -262,7 +263,7 @@ def get_message_context(
             FROM messages
             JOIN chats ON messages.chat_jid = chats.jid
             WHERE messages.chat_jid = ? AND messages.timestamp < ?
-            ORDER BY messages.timestamp DESC
+            ORDER BY messages.timestamp ASC
             LIMIT ?
         """, (msg_data[7], msg_data[0], before))
         
