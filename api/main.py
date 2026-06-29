@@ -2,12 +2,14 @@ import asyncio
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
 from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -16,6 +18,10 @@ from pydantic import BaseModel
 
 DB_PATH = os.getenv("DB_PATH", "/app/store/messages.db")
 BRIDGE_URL = os.getenv("BRIDGE_URL", "http://localhost:8080")
+DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin123")
+SECRET_KEY = os.getenv("SECRET_KEY", "changeme_use_a_long_random_string")
+ALGORITHM = "HS256"
+TOKEN_EXPIRE_HOURS = 24
 
 # ---------------------------------------------------------------------------
 # App
@@ -30,6 +36,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _create_token() -> str:
+    expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
+    return jwt.encode({"exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _verify_token(credentials: Optional[HTTPAuthorizationCredentials]) -> None:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def require_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+) -> None:
+    _verify_token(credentials)
+
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -278,6 +311,10 @@ def _db_search_contacts(q: str) -> List[dict]:
 # Pydantic request bodies
 # ---------------------------------------------------------------------------
 
+class LoginBody(BaseModel):
+    password: str
+
+
 class SendMessageBody(BaseModel):
     recipient: str
     message: str
@@ -292,13 +329,25 @@ class SendFileBody(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@app.post("/auth/login")
+async def login(body: LoginBody):
+    if body.password != DASHBOARD_PASSWORD:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {"token": _create_token()}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/health")
+async def api_health():
+    return {"status": "ok"}
+
+
 @app.get("/status")
-async def status():
+async def status(_: None = Depends(require_auth)):
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(f"{BRIDGE_URL}/api/status")
@@ -309,7 +358,7 @@ async def status():
 
 
 @app.get("/qr")
-async def qr():
+async def qr(_: None = Depends(require_auth)):
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(f"{BRIDGE_URL}/api/qr")
@@ -328,6 +377,7 @@ async def chats(
     query: Optional[str] = None,
     limit: int = 20,
     page: int = 0,
+    _: None = Depends(require_auth),
 ):
     result = await asyncio.to_thread(_db_list_chats, query, limit, page)
     return result
@@ -341,6 +391,7 @@ async def messages(
     page: int = 0,
     after: Optional[str] = None,
     before: Optional[str] = None,
+    _: None = Depends(require_auth),
 ):
     text = await asyncio.to_thread(
         _db_list_messages, chat_jid, query, limit, page, after, before
@@ -349,7 +400,7 @@ async def messages(
 
 
 @app.get("/contacts/search")
-async def contacts_search(q: str = ""):
+async def contacts_search(q: str = "", _: None = Depends(require_auth)):
     if not q:
         return []
     result = await asyncio.to_thread(_db_search_contacts, q)
@@ -357,7 +408,7 @@ async def contacts_search(q: str = ""):
 
 
 @app.post("/send")
-async def send(body: SendMessageBody):
+async def send(body: SendMessageBody, _: None = Depends(require_auth)):
     if not body.recipient:
         raise HTTPException(status_code=400, detail="recipient is required")
     try:
@@ -375,7 +426,7 @@ async def send(body: SendMessageBody):
 
 
 @app.post("/send-file")
-async def send_file(body: SendFileBody):
+async def send_file(body: SendFileBody, _: None = Depends(require_auth)):
     if not body.recipient:
         raise HTTPException(status_code=400, detail="recipient is required")
     if not body.media_path:

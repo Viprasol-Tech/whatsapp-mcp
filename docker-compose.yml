@@ -30,6 +30,8 @@ services:
       - wa-data:/app/store
     environment:
       - BRIDGE_URL=http://bridge:8080
+      - DASHBOARD_PASSWORD=admin123
+      - SECRET_KEY=changeme_use_a_long_random_string
     depends_on:
       - bridge
     networks:
