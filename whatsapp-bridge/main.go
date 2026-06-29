@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -14,13 +16,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal"
-
-	"bytes"
+	qrcode "github.com/skip2/go-qrcode"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -29,6 +31,13 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
+)
+
+// latestQRCode holds the most recent QR code string for pairing.
+// Access must be guarded by qrMu.
+var (
+	latestQRCode string
+	qrMu         sync.Mutex
 )
 
 // Message represents a chat message for our client
@@ -774,6 +783,70 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		})
 	})
 
+	// Handler for connection status
+	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		connected := client != nil && client.IsConnected() && client.IsLoggedIn()
+		phone := ""
+		if connected && client.Store.ID != nil {
+			phone = client.Store.ID.User
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": connected,
+			"phone":     phone,
+		})
+	})
+
+	// Handler for QR code
+	http.HandleFunc("/api/qr", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		// If already authenticated, return early
+		if client != nil && client.IsLoggedIn() {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"qr":            "",
+				"authenticated": true,
+			})
+			return
+		}
+
+		qrMu.Lock()
+		code := latestQRCode
+		qrMu.Unlock()
+
+		if code == "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"qr":            "",
+				"authenticated": false,
+			})
+			return
+		}
+
+		// Generate PNG from QR code string
+		pngBytes, err := qrcode.Encode(code, qrcode.Medium, 256)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to generate QR image: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		encoded := base64.StdEncoding.EncodeToString(pngBytes)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"qr":            encoded,
+			"authenticated": false,
+		})
+	})
+
 	// Start the server
 	serverAddr := fmt.Sprintf(":%d", port)
 	fmt.Printf("Starting REST API server on %s...\n", serverAddr)
@@ -871,7 +944,14 @@ func main() {
 			if evt.Event == "code" {
 				fmt.Println("\nScan this QR code with your WhatsApp app:")
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+				// Store latest QR code for the /api/qr endpoint
+				qrMu.Lock()
+				latestQRCode = evt.Code
+				qrMu.Unlock()
 			} else if evt.Event == "success" {
+				qrMu.Lock()
+				latestQRCode = ""
+				qrMu.Unlock()
 				connected <- true
 				break
 			}
