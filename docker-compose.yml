@@ -57,7 +57,7 @@ services:
     environment:
       - BRIDGE_URL=http://bridge:8080
       - DB_PATH=/app/store/messages.db
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_PROXY_URL=${CLAUDE_PROXY_URL:-http://172.17.0.1:3456/v1}
       - MY_JID=${MY_JID:-919633652112@s.whatsapp.net}
       - SYSTEM_PROMPT=${SYSTEM_PROMPT:-}
       - AUTO_REPLY_ENABLED=${AUTO_REPLY_ENABLED:-true}

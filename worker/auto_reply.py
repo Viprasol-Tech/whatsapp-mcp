@@ -11,8 +11,8 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 
-import anthropic
 import requests
+from openai import OpenAI
 
 # ---------------------------------------------------------------------------
 # Configuration (env vars)
@@ -20,7 +20,8 @@ import requests
 
 BRIDGE_URL = os.getenv("BRIDGE_URL", "http://bridge:8080")
 DB_PATH = os.getenv("DB_PATH", "/app/store/messages.db")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+# Proxy URL: claude-max-api-proxy running on the host, reachable from Docker via 172.17.0.1
+CLAUDE_PROXY_URL = os.getenv("CLAUDE_PROXY_URL", "http://172.17.0.1:3456/v1")
 MY_JID = os.getenv("MY_JID", "919633652112@s.whatsapp.net")
 AUTO_REPLY_ENABLED = os.getenv("AUTO_REPLY_ENABLED", "true").lower() == "true"
 
@@ -37,7 +38,7 @@ _DEFAULT_SYSTEM_PROMPT = (
 
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT") or _DEFAULT_SYSTEM_PROMPT
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-sonnet-4-5"
 POLL_INTERVAL_SECONDS = 30
 LOOKBACK_MINUTES = 5
 MIN_SEND_INTERVAL_SECONDS = 5
@@ -194,54 +195,50 @@ def log_reply(
 
 
 # ---------------------------------------------------------------------------
-# Claude API
+# Claude via claude-max-api-proxy (OpenAI-compatible, uses your subscription)
 # ---------------------------------------------------------------------------
 
-_anthropic_client = None
+_openai_client = None
 
 
-def get_anthropic_client():
-    global _anthropic_client
-    if _anthropic_client is None:
-        _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    return _anthropic_client
+def get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key="dummy", base_url=CLAUDE_PROXY_URL)
+    return _openai_client
 
 
-def build_claude_messages(context_msgs: list, new_message: str) -> list:
-    """Build the messages list for the Claude API call."""
-    messages = []
+def build_messages(context_msgs: list, new_message: str) -> list:
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for m in context_msgs:
         role = "assistant" if m["is_from_me"] else "user"
         messages.append({"role": role, "content": m["content"]})
-
-    # Ensure the conversation ends with the new inbound message (user role).
     messages.append({"role": "user", "content": new_message})
     return messages
 
 
 def call_claude(context_msgs: list, new_message: str) -> str:
-    """Call Claude API; retry once on failure. Returns reply text."""
-    client = get_anthropic_client()
-    messages = build_claude_messages(context_msgs, new_message)
+    """Call Claude via proxy (uses Claude Max subscription). Retry once on failure."""
+    client = get_openai_client()
+    messages = build_messages(context_msgs, new_message)
 
     def _call():
-        response = client.messages.create(
+        response = client.chat.completions.create(
             model=MODEL,
             max_tokens=256,
-            system=SYSTEM_PROMPT,
             messages=messages,
         )
-        return response.content[0].text.strip()
+        return response.choices[0].message.content.strip()
 
     try:
         return _call()
     except Exception as e:
-        log.warning("Claude API error (will retry once in 5 s): %s", e)
+        log.warning("Claude proxy error (will retry once in 5 s): %s", e)
         time.sleep(5)
         try:
             return _call()
         except Exception as e2:
-            raise RuntimeError("Claude API failed after retry: {}".format(e2)) from e2
+            raise RuntimeError("Claude proxy failed after retry: {}".format(e2)) from e2
 
 
 # ---------------------------------------------------------------------------
