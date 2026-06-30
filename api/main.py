@@ -496,6 +496,7 @@ async def change_password(body: ChangePasswordBody, _: None = Depends(require_au
         raise HTTPException(status_code=400, detail="Current password is incorrect.")
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters.")
+    global DASHBOARD_PASSWORD
     # Persist to .env file on disk so it survives restarts
     env_path = "/app/.env"
     try:
@@ -518,8 +519,6 @@ async def change_password(body: ChangePasswordBody, _: None = Depends(require_au
             f.writelines(new_lines)
     except Exception:
         pass  # Best-effort — in-memory update still works until restart
-    # Update in-memory value
-    global DASHBOARD_PASSWORD
     DASHBOARD_PASSWORD = body.new_password
     return {"ok": True}
 
