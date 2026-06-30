@@ -39,8 +39,7 @@ services:
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-admin123}
       - SECRET_KEY=${SECRET_KEY:-changeme_use_a_long_random_string}
     depends_on:
-      bridge:
-        condition: service_healthy
+      - bridge
     networks:
       - wamcp
     restart: unless-stopped
@@ -80,8 +79,7 @@ services:
       - SYSTEM_PROMPT=${SYSTEM_PROMPT:-}
       - AUTO_REPLY_ENABLED=${AUTO_REPLY_ENABLED:-true}
     depends_on:
-      bridge:
-        condition: service_healthy
+      - bridge
     networks:
       - wamcp
     restart: unless-stopped
