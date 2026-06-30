@@ -867,7 +867,7 @@ def _db_new_messages_since(ts: str) -> List[dict]:
 # Lead management endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/api/leads")
+@app.get("/leads")
 async def list_leads(_: None = Depends(require_auth)):
     try:
         result = await asyncio.to_thread(_db_list_leads)
@@ -879,7 +879,7 @@ async def list_leads(_: None = Depends(require_auth)):
 _VALID_JID_SUFFIXES = ("@s.whatsapp.net", "@lid", "@g.us")
 
 
-@app.get("/api/leads/export")
+@app.get("/leads/export")
 async def export_leads(_: None = Depends(require_auth)):
     def _fetch():
         with sqlite3.connect(DB_PATH) as conn:
@@ -908,7 +908,7 @@ async def export_leads(_: None = Depends(require_auth)):
     )
 
 
-@app.post("/api/leads/{jid}/resume")
+@app.post("/leads/{jid}/resume")
 async def resume_lead(jid: str, _: None = Depends(require_auth)):
     if not any(jid.endswith(suffix) for suffix in _VALID_JID_SUFFIXES):
         raise HTTPException(status_code=422, detail="Invalid jid format")
@@ -919,7 +919,7 @@ async def resume_lead(jid: str, _: None = Depends(require_auth)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.patch("/api/leads/{jid}/notes")
+@app.patch("/leads/{jid}/notes")
 async def update_lead_notes(jid: str, body: NotesUpdate, _: None = Depends(require_auth)):
     def _do(jid, notes):
         with sqlite3.connect(DB_PATH) as conn:
@@ -932,7 +932,7 @@ async def update_lead_notes(jid: str, body: NotesUpdate, _: None = Depends(requi
     return {"ok": True, "jid": jid}
 
 
-@app.get("/api/notifications")
+@app.get("/notifications")
 async def get_notifications(_: None = Depends(require_auth)):
     try:
         result = await asyncio.to_thread(_db_get_notifications)
@@ -941,7 +941,7 @@ async def get_notifications(_: None = Depends(require_auth)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/dashboard")
+@app.get("/dashboard")
 async def get_dashboard(_: None = Depends(require_auth)):
     try:
         result = await asyncio.to_thread(_db_get_dashboard)
@@ -976,7 +976,7 @@ async def _event_generator(token: str):
             break
 
 
-@app.get("/api/events")
+@app.get("/events")
 async def sse_events(token: str = Query(...)):
     return StreamingResponse(
         _event_generator(token),
