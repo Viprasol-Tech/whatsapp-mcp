@@ -48,7 +48,9 @@ export default function Sidebar({ chats, activeChat, onSelectChat, searchQuery, 
         </div>
       </div>
       <div className="chat-list">
-        {chats.length === 0 ? (
+        {!chats ? (
+          <div className="no-chats">Loading...</div>
+        ) : chats.length === 0 ? (
           <div className="no-chats">No chats found</div>
         ) : (
           chats.map(chat => {
