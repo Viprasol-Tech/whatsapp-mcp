@@ -144,7 +144,7 @@ export default function App() {
       let sender = '', text = withoutChat;
       if (fromMatch) { sender = fromMatch[1].trim(); text = fromMatch[2].trim(); }
       return { id: i, timestamp, sender, text, isSent: sender.toLowerCase() === 'me' };
-    }).filter(m => m.text);
+    }).filter(m => m.text).reverse();
   }, []);
 
   // Load messages for active chat
