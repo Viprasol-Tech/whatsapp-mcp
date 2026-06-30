@@ -492,11 +492,11 @@ async def login(body: LoginBody):
 
 @app.post("/admin/change-password")
 async def change_password(body: ChangePasswordBody, _: None = Depends(require_auth)):
+    global DASHBOARD_PASSWORD
     if body.current_password != DASHBOARD_PASSWORD:
         raise HTTPException(status_code=400, detail="Current password is incorrect.")
     if len(body.new_password) < 6:
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters.")
-    global DASHBOARD_PASSWORD
     # Persist to .env file on disk so it survives restarts
     env_path = "/app/.env"
     try:
