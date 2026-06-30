@@ -186,7 +186,7 @@ export default function App() {
     } catch (_) { toast.error('Network error'); return false; }
   }, [activeChat, token]);
 
-  const filteredChats = searchQuery
+  const filteredChats = searchQuery && chats
     ? chats.filter(c =>
         (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (c.last_message || '').toLowerCase().includes(searchQuery.toLowerCase()))
