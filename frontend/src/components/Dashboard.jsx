@@ -108,10 +108,11 @@ export default function Dashboard({ token, onSelectChat }) {
   }, [fetchMetrics, fetchLeads]);
 
   const convRate = metrics
-    ? metrics.total_leads > 0 ? ((metrics.converted / metrics.total_leads) * 100).toFixed(1) + '%' : '0%'
+    ? metrics.total_leads > 0 ? (((metrics.converted ?? 0) / metrics.total_leads) * 100).toFixed(1) + '%' : '0%'
     : null;
 
-  const recentLeads = [...leads].sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0)).slice(0, 8);
+  const toMs = ts => ts ? new Date(typeof ts === 'number' ? ts * 1000 : ts).getTime() || 0 : 0;
+  const recentLeads = [...leads].sort((a, b) => toMs(b.last_seen) - toMs(a.last_seen)).slice(0, 8);
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px', background: '#0a0a0f', minHeight: 0 }}>

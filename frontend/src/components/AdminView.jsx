@@ -51,10 +51,18 @@ export default function AdminView({ token }) {
   const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
 
   useEffect(() => {
+    let cancelled = false;
     fetch('/api/worker/status', { headers: { Authorization: 'Bearer ' + token } })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setSysStatus(d); })
+      .then(d => {
+        if (d && !cancelled) {
+          setSysStatus(d);
+          // Derive real bot state from server — all_paused means bot is stopped
+          setBotEnabled(!d.all_paused);
+        }
+      })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [token]);
 
   async function changePassword(e) {
@@ -92,10 +100,17 @@ export default function AdminView({ token }) {
     setBotLoading(true);
     try {
       const endpoint = botEnabled ? '/api/worker/pause-all' : '/api/worker/resume-all';
-      await fetch(endpoint, { method: 'POST', headers });
-      setBotEnabled(v => !v);
-    } catch {}
-    setBotLoading(false);
+      const r = await fetch(endpoint, { method: 'POST', headers });
+      if (r.ok) {
+        setBotEnabled(v => !v);
+      } else {
+        alert('Failed to update bot state. Please try again.');
+      }
+    } catch {
+      alert('Network error — could not reach server.');
+    } finally {
+      setBotLoading(false);
+    }
   }
 
   return (

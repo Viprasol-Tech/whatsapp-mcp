@@ -67,7 +67,7 @@ export default function NavSidebar({ activeView, onChangeView, status, notificat
                 transition: 'all 0.15s',
                 position: 'relative',
               }}
-              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = '#161b22'; e.currentTarget.style.color = '#e6edf3'; }}
+              onMouseEnter={e => { if (!isActive) { e.currentTarget.style.background = '#161b22'; e.currentTarget.style.color = '#e6edf3'; } }}
               onMouseLeave={e => { if (!isActive) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#8b949e'; } }}
             >
               {isActive && (

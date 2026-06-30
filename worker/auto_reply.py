@@ -83,6 +83,8 @@ MY_PHONE = MY_JID.split("@")[0]
 def db_conn():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     try:
         yield conn
     finally:
@@ -427,21 +429,25 @@ def auto_pause_chat(chat_jid: str) -> None:
 def extract_lead_signals(reply: str, state: dict) -> dict:
     """Parse internal markers and update stage in state dict."""
     updated = dict(state)
+    has_hot    = "[HOT_LEAD]" in reply
+    has_budget = "[PAUSE_FOR_BUDGET]" in reply
 
-    if "[HOT_LEAD]" in reply:
+    if has_hot:
         updated["is_hot"] = 1
         updated["stage"] = "hot"
         log.info("HOT LEAD detected in chat %s — needs human follow-up!", state.get("chat_jid"))
 
-    if "[PAUSE_FOR_BUDGET]" in reply:
+    # Budget pause only applies if not already a hot lead
+    if has_budget and not has_hot:
         updated["stage"] = "budget_pending"
         auto_pause_chat(updated["chat_jid"])
 
-    # Stage progression
-    if updated["stage"] == "new":
-        updated["stage"] = "contacted"
-    elif updated["stage"] == "contacted":
-        updated["stage"] = "qualifying"
+    # Stage progression only when no special marker was triggered
+    if not has_hot and not has_budget:
+        if updated["stage"] == "new":
+            updated["stage"] = "contacted"
+        elif updated["stage"] == "contacted":
+            updated["stage"] = "qualifying"
 
     return updated
 
@@ -544,15 +550,16 @@ def process_message(msg: dict) -> None:
     save_lead_state(state)
 
     log.info("Reply for %s: %.100s", chat_jid, reply_text)
+    clean_reply = reply_text.replace("[HOT_LEAD]", "").replace("[PAUSE_FOR_BUDGET]", "").strip()
 
     try:
         send_via_bridge(chat_jid, reply_text)
-        log_reply(message_id, chat_jid, reply_text, "sent")
+        log_reply(message_id, chat_jid, clean_reply, "sent")
         log.info("Sent reply to %s (stage: %s, hot: %s).",
                  chat_jid, state.get("stage"), bool(state.get("is_hot")))
     except Exception as e:
         log.error("Bridge error for %s: %s", chat_jid, e)
-        log_reply(message_id, chat_jid, reply_text, "send_failed")
+        log_reply(message_id, chat_jid, clean_reply, "send_failed")
 
 
 # ---------------------------------------------------------------------------
@@ -595,14 +602,24 @@ def run_followups() -> None:
 
         # Lead's last inbound must still be within the 24h window
         last_inbound = get_last_inbound_time(chat_jid)
-        if not last_inbound or last_inbound < window_cutoff:
-            log.debug("Follow-up skipped for %s — outside 24h window.", chat_jid)
+        if not last_inbound:
+            log.debug("Follow-up skipped for %s — no inbound messages.", chat_jid)
+            continue
+        try:
+            li_dt = datetime.fromisoformat(last_inbound.replace("Z", "+00:00"))
+            if li_dt.tzinfo is None:
+                li_dt = li_dt.replace(tzinfo=timezone.utc)
+            if li_dt < (now - timedelta(hours=FOLLOWUP_WINDOW_HOURS)):
+                log.debug("Follow-up skipped for %s — outside %dh window.", chat_jid, FOLLOWUP_WINDOW_HOURS)
+                continue
+        except (ValueError, TypeError):
+            log.debug("Follow-up skipped for %s — unparseable timestamp: %s", chat_jid, last_inbound)
             continue
 
         # Only follow up if the last message in the chat is still ours
         if not last_message_is_mine(chat_jid):
-            # Lead replied — clear follow-up flag
-            state["followup_sent"] = 1
+            # Lead replied — reset flag so future silences can trigger a new follow-up
+            state["followup_sent"] = 0
             save_lead_state(state)
             continue
 
@@ -628,7 +645,7 @@ def run_followups() -> None:
             state["followup_sent"] = 1
             save_lead_state(state)
             log_reply(
-                "followup-{}".format(chat_jid),
+                "followup-{}-{:.0f}".format(chat_jid, time.time()),
                 chat_jid,
                 followup_text,
                 "sent",

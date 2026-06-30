@@ -126,20 +126,30 @@ export default function LeadsView({ token, onSelectChat }) {
             {filtered.length} of {leads.length} leads
           </div>
         </div>
-        <a
-          href="/api/leads/export"
+        <button
+          onClick={async () => {
+            try {
+              const r = await fetch('/api/leads/export', { headers });
+              if (!r.ok) { alert('Export failed'); return; }
+              const blob = await r.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = 'leads.csv'; a.click();
+              URL.revokeObjectURL(url);
+            } catch { alert('Network error'); }
+          }}
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
             background: '#16161e', border: '1px solid #2a2a3c', borderRadius: 8,
             padding: '8px 14px', color: '#8892a0', fontSize: 13, fontWeight: 500,
-            textDecoration: 'none', transition: 'all 0.15s',
+            cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s',
           }}
           onMouseEnter={e => { e.currentTarget.style.color = '#e2e8f0'; e.currentTarget.style.borderColor = '#3a3a5c'; }}
           onMouseLeave={e => { e.currentTarget.style.color = '#8892a0'; e.currentTarget.style.borderColor = '#2a2a3c'; }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export CSV
-        </a>
+        </button>
       </div>
 
       {/* Filters + search */}
