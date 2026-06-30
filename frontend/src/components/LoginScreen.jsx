@@ -32,46 +32,66 @@ export default function LoginScreen({ onLogin }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      height: '100vh', background: '#0a0e13',
+      minHeight: '100vh', background: '#0d1117',
     }}>
       <div style={{
-        background: '#111b21', borderRadius: 12, padding: '40px 36px',
-        width: 340, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20,
+        background: '#161b22',
+        border: '1px solid #30363d',
+        borderRadius: 12,
+        padding: '40px',
+        width: '100%',
+        maxWidth: 380,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24,
       }}>
-        <div style={{ fontSize: 48 }}>💬</div>
+        {/* Brand header */}
         <div style={{ textAlign: 'center' }}>
-          <h2 style={{ color: '#e9edef', margin: 0, fontWeight: 600 }}>WhatsApp MCP</h2>
-          <p style={{ color: '#8696a0', margin: '6px 0 0', fontSize: 13 }}>Enter dashboard password</p>
+          <div style={{ fontSize: 28, fontWeight: 700, color: '#25d366', letterSpacing: '-0.5px', marginBottom: 6 }}>
+            🤖 Viprasol Tech
+          </div>
+          <div style={{ fontSize: 13, color: '#8b949e', fontWeight: 500 }}>
+            WhatsApp Sales Bot
+          </div>
         </div>
-        <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            autoFocus
-            style={{
-              background: '#2a3942', border: 'none', borderRadius: 8,
-              padding: '12px 16px', color: '#e9edef', fontSize: 15,
-              outline: 'none', width: '100%', boxSizing: 'border-box',
-            }}
-          />
-          {error && <p style={{ color: '#f15c6d', fontSize: 12, margin: 0 }}>{error}</p>}
-          <button
-            type="submit"
-            disabled={loading || !password}
-            style={{
-              background: loading || !password ? '#2a3942' : '#00a884',
-              color: loading || !password ? '#8696a0' : '#fff',
-              border: 'none', borderRadius: 8, padding: '12px',
-              fontSize: 15, fontWeight: 600, cursor: loading || !password ? 'not-allowed' : 'pointer',
-              transition: 'background 0.2s',
-            }}
-          >
-            {loading ? 'Logging in…' : 'Login'}
-          </button>
-        </form>
+
+        {/* Divider */}
+        <div style={{ width: '100%', height: 1, background: '#30363d' }} />
+
+        <div style={{ textAlign: 'center', width: '100%' }}>
+          <p style={{ color: '#8b949e', margin: '0 0 20px', fontSize: 13 }}>Enter dashboard password</p>
+          <form onSubmit={handleSubmit} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              autoFocus
+              style={{
+                background: '#21262d', border: '1px solid #30363d', borderRadius: 8,
+                padding: '12px 16px', color: '#e6edf3', fontSize: 15,
+                outline: 'none', width: '100%', boxSizing: 'border-box',
+                transition: 'border-color 0.2s',
+              }}
+              onFocus={e => { e.target.style.borderColor = '#25d366'; }}
+              onBlur={e => { e.target.style.borderColor = '#30363d'; }}
+            />
+            {error && <p style={{ color: '#f85149', fontSize: 12, margin: 0, textAlign: 'left' }}>{error}</p>}
+            <button
+              type="submit"
+              disabled={loading || !password}
+              style={{
+                background: loading || !password ? '#21262d' : '#25d366',
+                color: loading || !password ? '#8b949e' : '#0d1117',
+                border: 'none', borderRadius: 8, padding: '12px',
+                fontSize: 15, fontWeight: 700, cursor: loading || !password ? 'not-allowed' : 'pointer',
+                transition: 'background 0.2s, color 0.2s',
+                marginTop: 4,
+              }}
+            >
+              {loading ? 'Logging in…' : 'Login'}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );

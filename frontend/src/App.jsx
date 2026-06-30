@@ -6,6 +6,9 @@ import QRScreen from './components/QRScreen';
 import TopBar from './components/TopBar';
 import LoginScreen from './components/LoginScreen';
 import AutoReplyPanel from './components/AutoReplyPanel';
+import Dashboard from './components/Dashboard';
+import NotificationsPanel from './components/NotificationsPanel';
+import Toaster, { toast } from './components/Toast';
 
 const API = '/api';
 
@@ -25,12 +28,16 @@ export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('wa_token'));
   const [status, setStatus] = useState({ connected: false, phone: '' });
   const [waAuthenticated, setWaAuthenticated] = useState(false);
-  const [chats, setChats] = useState([]);
+  const [chats, setChats] = useState(null);
   const [activeChat, setActiveChat] = useState(null);
   const [messages, setMessages] = useState([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAutoReply, setShowAutoReply] = useState(false);
+  const [pausedChats, setPausedChats] = useState([]);
+  const [activeView, setActiveView] = useState('chats');
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notificationCount, setNotificationCount] = useState(0);
 
   function handleLogin(t) {
     setToken(t);
@@ -59,6 +66,59 @@ export default function App() {
     const id = setInterval(poll, 5000);
     return () => clearInterval(id);
   }, [token]);
+
+  // Poll notifications count
+  useEffect(() => {
+    if (!token || !waAuthenticated) return;
+    const poll = async () => {
+      try {
+        const r = await apiFetch('/notifications');
+        if (r.ok) {
+          const data = await r.json();
+          setNotificationCount(Array.isArray(data) ? data.length : 0);
+        }
+      } catch (_) {}
+    };
+    poll();
+    const id = setInterval(poll, 30000);
+    return () => clearInterval(id);
+  }, [token, waAuthenticated]);
+
+  // Fetch paused chats from worker status
+  useEffect(() => {
+    if (!token || !waAuthenticated) return;
+    const load = async () => {
+      try {
+        const r = await apiFetch('/worker/status');
+        if (r.ok) {
+          const data = await r.json();
+          setPausedChats(data.paused_chats || []);
+        }
+      } catch (_) {}
+    };
+    load();
+    const id = setInterval(load, 10000);
+    return () => clearInterval(id);
+  }, [token, waAuthenticated]);
+
+  const toggleBotForChat = useCallback(async () => {
+    if (!activeChat) return;
+    const jid = activeChat.jid;
+    const isPaused = pausedChats.includes(jid);
+    const endpoint = isPaused ? '/worker/resume' : '/worker/pause';
+    try {
+      const r = await apiFetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jid }),
+      });
+      if (r.ok) {
+        setPausedChats(prev =>
+          isPaused ? prev.filter(j => j !== jid) : [...prev, jid]
+        );
+      }
+    } catch (_) { toast.error('Network error'); }
+  }, [activeChat, pausedChats]);
 
   // Load chat list when WA authenticated
   useEffect(() => {
@@ -123,7 +183,7 @@ export default function App() {
         body: JSON.stringify({ recipient: activeChat.jid, message: text }),
       });
       return !!(await r.json()).success;
-    } catch (_) { return false; }
+    } catch (_) { toast.error('Network error'); return false; }
   }, [activeChat, token]);
 
   const filteredChats = searchQuery
@@ -139,22 +199,42 @@ export default function App() {
   return (
     <div className="app">
       <div className="sidebar">
-        <TopBar status={status} onLogout={handleLogout} onToggleAutoReply={() => setShowAutoReply(v => !v)} />
-        <Sidebar
-          chats={filteredChats}
-          activeChat={activeChat}
-          onSelectChat={setActiveChat}
-          searchQuery={searchQuery}
-          onSearch={setSearchQuery}
+        <TopBar
+          status={status}
+          onLogout={handleLogout}
+          onToggleAutoReply={() => setShowAutoReply(v => !v)}
+          notificationCount={notificationCount}
+          onToggleNotifications={() => setShowNotifications(v => !v)}
         />
+        <div className="view-tabs">
+          <button className={`view-tab ${activeView === 'chats' ? 'active' : ''}`} onClick={() => setActiveView('chats')}>Chats</button>
+          <button className={`view-tab ${activeView === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveView('dashboard')}>Dashboard</button>
+          <button className={`view-tab ${activeView === 'leads' ? 'active' : ''}`} onClick={() => setActiveView('leads')}>Leads</button>
+        </div>
+        {activeView === 'chats' && (
+          <Sidebar
+            chats={filteredChats}
+            activeChat={activeChat}
+            onSelectChat={setActiveChat}
+            searchQuery={searchQuery}
+            onSearch={setSearchQuery}
+          />
+        )}
       </div>
       <div className="main-panel">
-        {activeChat ? (
+        {activeView === 'dashboard' || activeView === 'leads' ? (
+          <Dashboard
+            token={token}
+            onSelectChat={(chat) => { setActiveChat(chat); setActiveView('chats'); }}
+          />
+        ) : activeChat ? (
           <ChatWindow
             chat={activeChat}
             messages={messages}
             loading={loadingMessages}
             onSend={sendMessage}
+            botPaused={pausedChats.includes(activeChat.jid)}
+            onToggleBot={toggleBotForChat}
           />
         ) : (
           <div className="empty-state">
@@ -167,6 +247,14 @@ export default function App() {
       {showAutoReply && (
         <AutoReplyPanel token={token} onClose={() => setShowAutoReply(false)} />
       )}
+      {showNotifications && (
+        <NotificationsPanel
+          token={token}
+          onClose={() => setShowNotifications(false)}
+          onSelectChat={(chat) => { setActiveChat(chat); setShowNotifications(false); }}
+        />
+      )}
+      <Toaster />
     </div>
   );
 }

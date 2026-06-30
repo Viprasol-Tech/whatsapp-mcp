@@ -37,7 +37,7 @@ function formatDateLabel(timestamp) {
   return date.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
-export default function ChatWindow({ chat, messages, loading, onSend }) {
+export default function ChatWindow({ chat, messages, loading, onSend, botPaused, onToggleBot }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
@@ -96,6 +96,13 @@ export default function ChatWindow({ chat, messages, loading, onSend }) {
             {chat.is_group ? 'Group' : chat.jid}
           </div>
         </div>
+        <button
+          className={`bot-toggle-btn ${botPaused ? 'bot-off' : 'bot-on'}`}
+          onClick={onToggleBot}
+          title={botPaused ? 'Bot is OFF — click to enable auto-reply' : 'Bot is ON — click to disable auto-reply'}
+        >
+          🤖 {botPaused ? 'Bot OFF' : 'Bot ON'}
+        </button>
       </div>
 
       {/* Messages */}

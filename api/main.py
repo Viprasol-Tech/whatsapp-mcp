@@ -1,4 +1,7 @@
 import asyncio
+import csv
+import io
+import json
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -6,8 +9,9 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 
 import httpx
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from pydantic import BaseModel
@@ -20,6 +24,13 @@ DB_PATH = os.getenv("DB_PATH", "/app/store/messages.db")
 BRIDGE_URL = os.getenv("BRIDGE_URL", "http://localhost:8080")
 DASHBOARD_PASSWORD = os.getenv("DASHBOARD_PASSWORD", "admin123")
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme_use_a_long_random_string")
+if SECRET_KEY == "changeme_use_a_long_random_string":
+    import sys
+    print(
+        "WARNING: SECRET_KEY is using the insecure default value. "
+        "Set the SECRET_KEY environment variable before deploying to production.",
+        file=sys.stderr,
+    )
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
@@ -31,7 +42,7 @@ app = FastAPI(title="WhatsApp MCP API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://187.77.219.244", "https://187.77.219.244"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -162,13 +173,17 @@ def _db_list_chats(
                 chats.jid,
                 chats.name,
                 chats.last_message_time,
-                messages.content   AS last_message,
-                messages.sender    AS last_sender,
-                messages.is_from_me AS last_is_from_me
+                m.content   AS last_message,
+                m.sender    AS last_sender,
+                m.is_from_me AS last_is_from_me
             FROM chats
-            LEFT JOIN messages
-                ON chats.jid = messages.chat_jid
-                AND chats.last_message_time = messages.timestamp
+            LEFT JOIN messages m
+                ON m.id = (
+                    SELECT id FROM messages
+                    WHERE chat_jid = chats.jid
+                    ORDER BY datetime(timestamp) DESC
+                    LIMIT 1
+                )
         """
         params: list = []
         if query:
@@ -329,6 +344,10 @@ class WorkerPauseBody(BaseModel):
     jid: str
 
 
+class NotesUpdate(BaseModel):
+    notes: str
+
+
 # ---------------------------------------------------------------------------
 # Worker DB helpers (sync)
 # ---------------------------------------------------------------------------
@@ -355,6 +374,13 @@ def _db_worker_status() -> dict:
             );
             """
         )
+
+        # Add notes column to lead_state if it doesn't exist yet
+        try:
+            conn.execute("ALTER TABLE lead_state ADD COLUMN notes TEXT DEFAULT ''")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
 
         cursor.execute("SELECT COUNT(*) FROM auto_replies WHERE status = 'sent'")
         total_replied = cursor.fetchone()[0]
@@ -653,6 +679,310 @@ async def worker_resume_all(_: None = Depends(require_auth)):
         return {"ok": True, "paused": False}
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Lead management DB helpers (sync)
+# ---------------------------------------------------------------------------
+
+def _db_list_leads() -> List[dict]:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ls.chat_jid, c.name, ls.stage, ls.is_hot, ls.last_auto_reply, ls.updated_at,
+                   m.content as last_message, m.timestamp as last_seen,
+                   (SELECT COUNT(*) FROM auto_replies ar WHERE ar.chat_jid = ls.chat_jid AND ar.status='sent') as reply_count,
+                   CASE WHEN pc.jid IS NOT NULL THEN 1 ELSE 0 END as budget_paused,
+                   ls.notes
+            FROM lead_state ls
+            LEFT JOIN chats c ON c.jid = ls.chat_jid
+            LEFT JOIN messages m ON m.id = (
+                SELECT id FROM messages WHERE chat_jid = ls.chat_jid ORDER BY datetime(timestamp) DESC LIMIT 1
+            )
+            LEFT JOIN paused_chats pc ON pc.jid = ls.chat_jid
+            ORDER BY ls.updated_at DESC
+            """
+        )
+        rows = cursor.fetchall()
+        result = []
+        for row in rows:
+            jid = row[0]
+            name = row[1]
+            result.append(
+                {
+                    "jid": jid,
+                    "display_name": name if name else jid,
+                    "stage": row[2],
+                    "is_hot": bool(row[3]) if row[3] is not None else False,
+                    "budget_paused": bool(row[9]),
+                    "last_message": row[6],
+                    "last_seen": row[7],
+                    "reply_count": row[8] or 0,
+                    "notes": row[10] or "",
+                }
+            )
+        return result
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
+def _db_resume_lead(jid: str) -> None:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("DELETE FROM paused_chats WHERE jid = ?", (jid,))
+        conn.commit()
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
+def _db_get_notifications() -> List[dict]:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT pc.jid, c.name, 'budget_pause' as type, pc.paused_at as since,
+                   m.content as last_message
+            FROM paused_chats pc
+            LEFT JOIN chats c ON c.jid = pc.jid
+            LEFT JOIN messages m ON m.id = (
+                SELECT id FROM messages WHERE chat_jid = pc.jid ORDER BY datetime(timestamp) DESC LIMIT 1
+            )
+            WHERE pc.jid != '*'
+
+            UNION ALL
+
+            SELECT ls.chat_jid, c.name, 'hot_lead' as type, ls.updated_at as since,
+                   m.content as last_message
+            FROM lead_state ls
+            LEFT JOIN chats c ON c.jid = ls.chat_jid
+            LEFT JOIN messages m ON m.id = (
+                SELECT id FROM messages WHERE chat_jid = ls.chat_jid ORDER BY datetime(timestamp) DESC LIMIT 1
+            )
+            WHERE ls.is_hot = 1
+            AND ls.chat_jid NOT IN (SELECT jid FROM paused_chats WHERE jid != '*')
+            AND NOT EXISTS (
+                SELECT 1 FROM messages
+                WHERE chat_jid = ls.chat_jid AND is_from_me = 1
+                AND datetime(timestamp) > datetime('now', '-24 hours')
+            )
+            """
+        )
+        rows = cursor.fetchall()
+        result = []
+        for row in rows:
+            jid = row[0]
+            name = row[1]
+            result.append(
+                {
+                    "jid": jid,
+                    "display_name": name if name else jid,
+                    "type": row[2],
+                    "since": row[3],
+                    "last_message": row[4],
+                }
+            )
+        return result
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
+def _db_get_dashboard() -> dict:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM lead_state")
+        total_leads = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM lead_state WHERE is_hot = 1")
+        hot_leads = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM paused_chats WHERE jid != '*'")
+        budget_paused = cursor.fetchone()[0]
+
+        cursor.execute(
+            "SELECT COUNT(*) FROM auto_replies WHERE status='sent' AND date(replied_at) = date('now')"
+        )
+        replies_today = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM lead_state WHERE stage='converted'")
+        converted = cursor.fetchone()[0]
+
+        conversion_rate = (converted / total_leads * 100) if total_leads > 0 else 0
+
+        return {
+            "total_leads": total_leads,
+            "hot_leads": hot_leads,
+            "budget_paused": budget_paused,
+            "replies_today": replies_today,
+            "converted": converted,
+            "conversion_rate": round(conversion_rate, 2),
+        }
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
+def _db_new_messages_since(ts: str) -> List[dict]:
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT chat_jid, content, timestamp, is_from_me
+            FROM messages
+            WHERE datetime(timestamp) > datetime(?)
+            ORDER BY timestamp ASC
+            LIMIT 20
+            """,
+            (ts,),
+        )
+        rows = cursor.fetchall()
+        return [
+            {
+                "chat_jid": row[0],
+                "content": row[1],
+                "timestamp": row[2],
+                "is_from_me": bool(row[3]),
+            }
+            for row in rows
+        ]
+    except sqlite3.Error as e:
+        raise RuntimeError(f"DB error: {e}") from e
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Lead management endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/leads")
+async def list_leads(_: None = Depends(require_auth)):
+    try:
+        result = await asyncio.to_thread(_db_list_leads)
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+_VALID_JID_SUFFIXES = ("@s.whatsapp.net", "@lid", "@g.us")
+
+
+@app.get("/api/leads/export")
+async def export_leads(_: None = Depends(require_auth)):
+    def _fetch():
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT ls.chat_jid, c.name, ls.stage, ls.is_hot, ls.notes,
+                       ls.last_auto_reply, ls.updated_at,
+                       (SELECT COUNT(*) FROM auto_replies ar WHERE ar.chat_jid = ls.chat_jid AND ar.status='sent') as reply_count
+                FROM lead_state ls
+                LEFT JOIN chats c ON c.jid = ls.chat_jid
+                ORDER BY ls.updated_at DESC
+            """).fetchall()
+        return [dict(r) for r in rows]
+
+    rows = await asyncio.to_thread(_fetch)
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["chat_jid", "name", "stage", "is_hot", "notes", "last_auto_reply", "updated_at", "reply_count"])
+    writer.writeheader()
+    writer.writerows(rows)
+    csv_content = output.getvalue()
+
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=leads.csv"},
+    )
+
+
+@app.post("/api/leads/{jid}/resume")
+async def resume_lead(jid: str, _: None = Depends(require_auth)):
+    if not any(jid.endswith(suffix) for suffix in _VALID_JID_SUFFIXES):
+        raise HTTPException(status_code=422, detail="Invalid jid format")
+    try:
+        await asyncio.to_thread(_db_resume_lead, jid)
+        return {"ok": True, "jid": jid}
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/leads/{jid}/notes")
+async def update_lead_notes(jid: str, body: NotesUpdate, _: None = Depends(require_auth)):
+    def _do(jid, notes):
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "UPDATE lead_state SET notes = ? WHERE chat_jid = ?",
+                (notes[:2000], jid),  # cap at 2000 chars
+            )
+            conn.commit()
+    await asyncio.to_thread(_do, jid, body.notes)
+    return {"ok": True, "jid": jid}
+
+
+@app.get("/api/notifications")
+async def get_notifications(_: None = Depends(require_auth)):
+    try:
+        result = await asyncio.to_thread(_db_get_notifications)
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dashboard")
+async def get_dashboard(_: None = Depends(require_auth)):
+    try:
+        result = await asyncio.to_thread(_db_get_dashboard)
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# SSE events endpoint
+# ---------------------------------------------------------------------------
+
+async def _event_generator(token: str):
+    try:
+        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        yield "data: {\"error\": \"unauthorized\"}\n\n"
+        return
+
+    last_ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    while True:
+        try:
+            rows = await asyncio.to_thread(_db_new_messages_since, last_ts)
+            if rows:
+                last_ts = rows[-1]["timestamp"]
+                for row in rows:
+                    yield f"data: {json.dumps({'type': 'new_message', 'payload': row})}\n\n"
+            else:
+                yield ": heartbeat\n\n"
+            await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            break
+
+
+@app.get("/api/events")
+async def sse_events(token: str = Query(...)):
+    return StreamingResponse(
+        _event_generator(token),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------

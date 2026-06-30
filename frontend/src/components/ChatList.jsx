@@ -16,11 +16,48 @@ function truncate(str, max = 45) {
   return str.length > max ? str.slice(0, max) + '…' : str;
 }
 
+function displayName(chat) {
+  const raw = chat.name || '';
+  const jid = chat.jid || '';
+
+  // If name is a real name (not just a number), use it
+  if (raw && !/^\d+$/.test(raw)) return raw;
+
+  // For @s.whatsapp.net contacts, show phone with + prefix
+  if (jid.endsWith('@s.whatsapp.net')) {
+    const phone = jid.replace('@s.whatsapp.net', '');
+    return '+' + phone;
+  }
+
+  // For @lid contacts, show shortened ID or raw number as phone
+  const lid = jid.replace('@lid', '').replace('@s.whatsapp.net', '');
+  if (lid.length > 8) return lid.slice(0, 6) + '…' + lid.slice(-4);
+  return lid || jid;
+}
+
 export default function ChatList({ chats, selectedJid, onSelect }) {
-  if (!chats || chats.length === 0) {
+  if (chats === null || chats === undefined) {
     return (
-      <div style={{ padding: '24px 16px', color: '#5a6478', fontSize: '13px', textAlign: 'center' }}>
-        No chats found
+      <div style={{ padding: '8px' }}>
+        {[...Array(5)].map((_, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px' }}>
+            <div className="skeleton skeleton-avatar" />
+            <div style={{ flex: 1 }}>
+              <div className="skeleton skeleton-text" style={{ width: '60%' }} />
+              <div className="skeleton skeleton-text" style={{ width: '85%' }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (chats.length === 0) {
+    return (
+      <div style={{ padding: '24px 16px', color: '#8b949e', fontSize: '13px', textAlign: 'center' }}>
+        <div style={{ fontSize: '32px', marginBottom: '12px' }}>📱</div>
+        <div style={{ fontWeight: 600, marginBottom: '4px', color: '#e6edf3' }}>No conversations yet</div>
+        <div>WhatsApp messages will appear here once your account is connected</div>
       </div>
     );
   }
@@ -67,7 +104,9 @@ export default function ChatList({ chats, selectedJid, onSelect }) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '3px' }}>
                 <span style={{ fontWeight: 600, fontSize: '14px', color: '#e8eaf0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {chat.name || chat.jid}
+                  {displayName(chat)}
+                  {!!chat.is_hot && <span style={{fontSize:'10px',marginLeft:'4px'}}>🔥</span>}
+                  {!!chat.budget_paused && <span style={{fontSize:'10px',marginLeft:'2px'}}>⏸</span>}
                 </span>
                 <span style={{ fontSize: '11px', color: '#5a6478', flexShrink: 0, marginLeft: '8px' }}>
                   {formatTime(chat.last_message_time)}
