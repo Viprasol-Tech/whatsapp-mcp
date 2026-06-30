@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import './App.css';
+import NavSidebar from './components/NavSidebar';
 import Sidebar from './components/Sidebar';
 import ChatWindow from './components/ChatWindow';
 import QRScreen from './components/QRScreen';
@@ -7,6 +8,8 @@ import TopBar from './components/TopBar';
 import LoginScreen from './components/LoginScreen';
 import AutoReplyPanel from './components/AutoReplyPanel';
 import Dashboard from './components/Dashboard';
+import LeadsView from './components/LeadsView';
+import AdminView from './components/AdminView';
 import NotificationsPanel from './components/NotificationsPanel';
 import Toaster, { toast } from './components/Toast';
 
@@ -35,20 +38,14 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showAutoReply, setShowAutoReply] = useState(false);
   const [pausedChats, setPausedChats] = useState([]);
-  const [activeView, setActiveView] = useState('chats');
+  const [activeView, setActiveView] = useState('dashboard');
   const [showNotifications, setShowNotifications] = useState(false);
   const [notificationCount, setNotificationCount] = useState(0);
 
-  function handleLogin(t) {
-    setToken(t);
-  }
+  function handleLogin(t) { setToken(t); }
+  function handleLogout() { localStorage.removeItem('wa_token'); setToken(null); }
 
-  function handleLogout() {
-    localStorage.removeItem('wa_token');
-    setToken(null);
-  }
-
-  // Poll connection status every 5s (only when logged in)
+  // Poll connection status
   useEffect(() => {
     if (!token) return;
     const poll = async () => {
@@ -84,7 +81,7 @@ export default function App() {
     return () => clearInterval(id);
   }, [token, waAuthenticated]);
 
-  // Fetch paused chats from worker status
+  // Fetch paused chats
   useEffect(() => {
     if (!token || !waAuthenticated) return;
     const load = async () => {
@@ -113,14 +110,12 @@ export default function App() {
         body: JSON.stringify({ jid }),
       });
       if (r.ok) {
-        setPausedChats(prev =>
-          isPaused ? prev.filter(j => j !== jid) : [...prev, jid]
-        );
+        setPausedChats(prev => isPaused ? prev.filter(j => j !== jid) : [...prev, jid]);
       }
     } catch (_) { toast.error('Network error'); }
   }, [activeChat, pausedChats]);
 
-  // Load chat list when WA authenticated
+  // Load chat list
   useEffect(() => {
     if (!token || !waAuthenticated) return;
     const load = async () => {
@@ -137,7 +132,6 @@ export default function App() {
     return () => clearInterval(id);
   }, [token, waAuthenticated]);
 
-  // Parse the messages string into bubble objects
   const parseMessages = useCallback((raw) => {
     if (!raw || typeof raw !== 'string') return [];
     const lines = raw.split('\n').filter(l => l.trim());
@@ -153,7 +147,7 @@ export default function App() {
     }).filter(m => m.text);
   }, []);
 
-  // Load messages for active chat, poll every 3s
+  // Load messages for active chat
   useEffect(() => {
     if (!activeChat || !token) { setMessages([]); return; }
     let cancelled = false;
@@ -192,58 +186,78 @@ export default function App() {
         (c.last_message || '').toLowerCase().includes(searchQuery.toLowerCase()))
     : chats;
 
+  // Handle select chat from other views
+  const handleSelectChat = useCallback((chat) => {
+    setActiveChat(chat);
+    setActiveView('whatsapp');
+  }, []);
+
   // --- Render gates ---
   if (!token) return <LoginScreen onLogin={handleLogin} />;
   if (!waAuthenticated) return <QRScreen onAuthenticated={() => setWaAuthenticated(true)} token={token} />;
 
   return (
     <div className="app">
-      <div className="sidebar">
-        <TopBar
-          status={status}
-          onLogout={handleLogout}
-          onToggleAutoReply={() => setShowAutoReply(v => !v)}
-          notificationCount={notificationCount}
-          onToggleNotifications={() => setShowNotifications(v => !v)}
-        />
-        <div className="view-tabs">
-          <button className={`view-tab ${activeView === 'chats' ? 'active' : ''}`} onClick={() => setActiveView('chats')}>Chats</button>
-          <button className={`view-tab ${activeView === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveView('dashboard')}>Dashboard</button>
-          <button className={`view-tab ${activeView === 'leads' ? 'active' : ''}`} onClick={() => setActiveView('leads')}>Leads</button>
-        </div>
-        {activeView === 'chats' && (
-          <Sidebar
-            chats={filteredChats}
-            activeChat={activeChat}
-            onSelectChat={setActiveChat}
-            searchQuery={searchQuery}
-            onSearch={setSearchQuery}
-          />
-        )}
+      {/* Left nav sidebar */}
+      <NavSidebar
+        activeView={activeView}
+        onChangeView={setActiveView}
+        status={status}
+        notificationCount={notificationCount}
+        onLogout={handleLogout}
+      />
+
+      {/* Right content area */}
+      <div className="content-area">
+        {activeView === 'whatsapp' ? (
+          <>
+            {/* Chat list panel */}
+            <div className="chat-panel">
+              <TopBar
+                status={status}
+                onLogout={handleLogout}
+                onToggleAutoReply={() => setShowAutoReply(v => !v)}
+                notificationCount={notificationCount}
+                onToggleNotifications={() => setShowNotifications(v => !v)}
+              />
+              <Sidebar
+                chats={filteredChats}
+                activeChat={activeChat}
+                onSelectChat={setActiveChat}
+                searchQuery={searchQuery}
+                onSearch={setSearchQuery}
+              />
+            </div>
+            {/* Chat window */}
+            <div className="main-panel">
+              {activeChat ? (
+                <ChatWindow
+                  chat={activeChat}
+                  messages={messages}
+                  loading={loadingMessages}
+                  onSend={sendMessage}
+                  botPaused={pausedChats.includes(activeChat.jid)}
+                  onToggleBot={toggleBotForChat}
+                />
+              ) : (
+                <div className="empty-state">
+                  <div className="empty-state-icon">💬</div>
+                  <h2>WhatsApp</h2>
+                  <p>Select a conversation from the list to start messaging</p>
+                </div>
+              )}
+            </div>
+          </>
+        ) : activeView === 'dashboard' ? (
+          <Dashboard token={token} onSelectChat={handleSelectChat} view="dashboard" />
+        ) : activeView === 'leads' ? (
+          <LeadsView token={token} onSelectChat={handleSelectChat} />
+        ) : activeView === 'admin' ? (
+          <AdminView token={token} />
+        ) : null}
       </div>
-      <div className="main-panel">
-        {activeView === 'dashboard' || activeView === 'leads' ? (
-          <Dashboard
-            token={token}
-            onSelectChat={(chat) => { setActiveChat(chat); setActiveView('chats'); }}
-          />
-        ) : activeChat ? (
-          <ChatWindow
-            chat={activeChat}
-            messages={messages}
-            loading={loadingMessages}
-            onSend={sendMessage}
-            botPaused={pausedChats.includes(activeChat.jid)}
-            onToggleBot={toggleBotForChat}
-          />
-        ) : (
-          <div className="empty-state">
-            <div className="empty-state-icon">💬</div>
-            <h2>WhatsApp MCP</h2>
-            <p>Select a conversation from the sidebar to start messaging</p>
-          </div>
-        )}
-      </div>
+
+      {/* Overlay panels */}
       {showAutoReply && (
         <AutoReplyPanel token={token} onClose={() => setShowAutoReply(false)} />
       )}
@@ -251,7 +265,7 @@ export default function App() {
         <NotificationsPanel
           token={token}
           onClose={() => setShowNotifications(false)}
-          onSelectChat={(chat) => { setActiveChat(chat); setShowNotifications(false); }}
+          onSelectChat={(chat) => { setActiveChat(chat); setShowNotifications(false); setActiveView('whatsapp'); }}
         />
       )}
       <Toaster />

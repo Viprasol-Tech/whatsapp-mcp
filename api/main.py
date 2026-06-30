@@ -348,6 +348,11 @@ class NotesUpdate(BaseModel):
     notes: str
 
 
+class ChangePasswordBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
 # ---------------------------------------------------------------------------
 # Worker DB helpers (sync)
 # ---------------------------------------------------------------------------
@@ -483,6 +488,40 @@ async def login(body: LoginBody):
     if body.password != DASHBOARD_PASSWORD:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return {"token": _create_token()}
+
+
+@app.post("/admin/change-password")
+async def change_password(body: ChangePasswordBody, _: None = Depends(require_auth)):
+    if body.current_password != DASHBOARD_PASSWORD:
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if len(body.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters.")
+    # Persist to .env file on disk so it survives restarts
+    env_path = "/app/.env"
+    try:
+        try:
+            with open(env_path, "r") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+        new_lines = []
+        found = False
+        for line in lines:
+            if line.startswith("DASHBOARD_PASSWORD="):
+                new_lines.append(f"DASHBOARD_PASSWORD={body.new_password}\n")
+                found = True
+            else:
+                new_lines.append(line)
+        if not found:
+            new_lines.append(f"DASHBOARD_PASSWORD={body.new_password}\n")
+        with open(env_path, "w") as f:
+            f.writelines(new_lines)
+    except Exception:
+        pass  # Best-effort — in-memory update still works until restart
+    # Update in-memory value
+    global DASHBOARD_PASSWORD
+    DASHBOARD_PASSWORD = body.new_password
+    return {"ok": True}
 
 
 @app.get("/health")

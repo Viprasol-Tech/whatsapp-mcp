@@ -1,4 +1,4 @@
-/* Viprasol Tech — Design Tokens */
+/* Viprasol Tech — Design Tokens v2 (B2B Enterprise 2026) */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
@@ -6,58 +6,72 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
-  /* Base palette — dark navy professional */
-  --color-bg: #0d1117;
-  --color-surface: #161b22;
-  --color-surface-raised: #1c2128;
-  --color-surface-overlay: #21262d;
-  --color-border: #30363d;
-  --color-border-subtle: #21262d;
+  /* Surface stack — elevation via color step, not shadow */
+  --color-bg:              #0a0a0f;
+  --color-surface-0:       #111118;   /* nav sidebar */
+  --color-surface-1:       #16161e;   /* cards */
+  --color-surface-2:       #1f1f2e;   /* raised elements */
+  --color-surface-3:       #252535;   /* hover states */
+
+  /* Alias for backward compat */
+  --color-surface:         var(--color-surface-1);
+  --color-surface-raised:  var(--color-surface-2);
+  --color-surface-overlay: var(--color-surface-3);
+
+  /* Borders */
+  --color-border:        #2a2a3c;
+  --color-border-subtle: #1f1f2e;
 
   /* Text */
-  --color-text-primary: #e6edf3;
-  --color-text-secondary: #8b949e;
-  --color-text-muted: #484f58;
+  --color-text-primary:   #e2e8f0;
+  --color-text-secondary: #8892a0;
+  --color-text-muted:     #4a5568;
 
-  /* Brand */
-  --color-accent: #25d366;
-  --color-accent-dark: #1aaf54;
+  /* Brand accent — WhatsApp green */
+  --color-accent:       #25d366;
+  --color-accent-dark:  #1a9c4a;
   --color-accent-muted: rgba(37, 211, 102, 0.12);
+  --color-accent-glow:  rgba(37, 211, 102, 0.08);
 
   /* Semantic */
-  --color-danger: #f85149;
-  --color-danger-muted: rgba(248, 81, 73, 0.1);
-  --color-warning: #d29922;
-  --color-warning-muted: rgba(210, 153, 34, 0.12);
-  --color-success: #3fb950;
-  --color-success-muted: rgba(63, 185, 80, 0.1);
-  --color-info: #58a6ff;
-  --color-hot: #ff7b00;
-  --color-hot-muted: rgba(255, 123, 0, 0.12);
+  --color-danger:        #f85149;
+  --color-danger-muted:  rgba(248, 81, 73, 0.1);
+  --color-warning:       #f59e0b;
+  --color-warning-muted: rgba(245, 158, 11, 0.12);
+  --color-success:       #25d366;
+  --color-success-muted: rgba(37, 211, 102, 0.1);
+  --color-info:          #58a6ff;
+  --color-hot:           #f59e0b;
+  --color-hot-muted:     rgba(245, 158, 11, 0.12);
+  --color-purple:        #8b5cf6;
+  --color-purple-muted:  rgba(139, 92, 246, 0.12);
 
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,0.6);
+  /* Shadows — used sparingly */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.5);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.6);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.7);
 
   /* Radius */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
   --radius-full: 9999px;
 
   /* Spacing */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-8:  32px;
   --space-10: 40px;
 
   /* Transitions */
   --transition-fast: 120ms ease;
   --transition-base: 200ms ease;
+
+  /* Nav */
+  --nav-width: 220px;
 }
